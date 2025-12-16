@@ -61,6 +61,7 @@ public interface IQuerySlackService
     IAsyncEnumerable<IEnumerable<SlackMessage>> GetMessagesAsync();
 }
 
+//一旦雑にモデルをここに置いておく
 public class UsersInfoApiResponse
 {
     [JsonPropertyName("ok")]
