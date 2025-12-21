@@ -3,33 +3,45 @@ using System.Diagnostics.CodeAnalysis;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace SlackRiverDotNet.Host.Models.Services;
 
-public class QuerySlackService(HttpClient httpClient, SlackServiceOptions options) : IQuerySlackService
+public class QuerySlackService(HttpClient httpClient, IOptions<SlackServiceOptions> options, ILogger<QuerySlackService> logger) : IQuerySlackService
 {
     private readonly ConcurrentDictionary<string, SlackUser> _users = new();
+    private static readonly SlackUser DefaultUser = new("Alice", "Alice");
     
-    public async IAsyncEnumerable<IEnumerable<SlackMessage>> GetMessagesAsync()
+    public async IAsyncEnumerable<IList<SlackMessage>> GetMessagesAsync(DateTimeOffset start)
     {
-        var defaultUser = new SlackUser(string.Empty, string.Empty);
+        var orderString = start.ToUnixTimeSeconds().ToString();
         while (true)
         {
-            var messages = await GetSlackMessagesFromApiAsync();
+            var messages = await GetSlackMessagesFromApiAsync(orderString);
 
-            if (messages is not null)
+            if (messages is not null && messages.Any())
             {
-                yield return messages
-                    .Select(x => new SlackMessage(defaultUser, x.Text, DateTimeOffset.FromUnixTimeSeconds(long.Parse(x.Timestamp.Split('.')[0]))));
+                var slackMessages = messages
+                    .Select(x => new SlackMessage(DefaultUser, x.Text, ToDateTimeOffset(x.Timestamp)))
+                    .Reverse().ToList();
+
+                yield return slackMessages;
+
+                orderString = slackMessages[0].Timestamp.ToString();
             }
             
-            await Task.Delay(options.ApiIntervalSeconds * 1000);
+            await Task.Delay(options.Value.ApiIntervalSeconds * 1000);
         }
+
+        static DateTimeOffset ToDateTimeOffset(string slackUnixTimeStrings)
+            => DateTimeOffset.FromUnixTimeSeconds(long.Parse(slackUnixTimeStrings.Split('.')[0]));
     }
 
-    private async Task<IEnumerable<ConversationsHistoryMessage>?> GetSlackMessagesFromApiAsync()
+    private async Task<IList<ConversationsHistoryMessage>?> GetSlackMessagesFromApiAsync(string orderString)
     {
-        var response = await httpClient.GetAsync($"conversations.history?channel={options.SlackChannelId}&limit=10");
+        logger.LogInformation($"oldest = {orderString}");
+        var response = await httpClient.GetAsync($"conversations.history?channel={options.Value.SlackChannelId}&limit=10&oldest={orderString}");
         var typedResponse = await JsonSerializer.DeserializeAsync<ConversationsHistoryApiResponse>(await response.Content.ReadAsStreamAsync());
 
         if (typedResponse?.Ok is not true)
@@ -58,7 +70,7 @@ public class QuerySlackService(HttpClient httpClient, SlackServiceOptions option
 
 public interface IQuerySlackService
 {
-    IAsyncEnumerable<IEnumerable<SlackMessage>> GetMessagesAsync();
+    IAsyncEnumerable<IList<SlackMessage>> GetMessagesAsync(DateTimeOffset start);
 }
 
 //一旦雑にモデルをここに置いておく
@@ -121,4 +133,8 @@ public record SlackMessage(SlackUser User, string Content, DateTimeOffset Timest
 
 public record SlackUser(string Name, string DisplayName);
 
-public record SlackServiceOptions(string SlackChannelId, int ApiIntervalSeconds);
+public record SlackServiceOptions
+{
+    public string SlackChannelId { get; init; }
+    public int ApiIntervalSeconds { get; init; }
+};
