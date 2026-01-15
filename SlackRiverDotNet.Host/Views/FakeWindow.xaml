@@ -5,7 +5,9 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:SlackRiverDotNet.Host.Views"
         mc:Ignorable="d"
-        Title="FakeWindow" Height="1" Width="1">
+        Title="FakeWindow" Height="1" Width="1"
+        WindowStyle="None"
+        ShowInTaskbar="False">
     <Grid>
         
     </Grid>

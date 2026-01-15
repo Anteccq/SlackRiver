@@ -24,7 +24,7 @@ class Program
         builder.Services.AddSingleton<IQuerySlackService, QuerySlackService>();
         builder.Services.AddHttpClient<IQuerySlackService, QuerySlackService>(x =>
         {
-            x.BaseAddress = new Uri("https://slack.com/api/");
+            x.BaseAddress = new Uri(configuration["SlackApiUrl"] ?? string.Empty);
             x.DefaultRequestHeaders.Add("Authorization", $"Bearer {configuration["SlackOAuthToken"]}");
         });
 

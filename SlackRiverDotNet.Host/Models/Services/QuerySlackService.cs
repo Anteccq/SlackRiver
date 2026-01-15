@@ -3,17 +3,18 @@ using System.Diagnostics.CodeAnalysis;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
+using SlackRiverDotNet.Host.Models.Manager;
 
 namespace SlackRiverDotNet.Host.Models.Services;
 
-public class QuerySlackService(HttpClient httpClient, IOptions<SlackServiceOptions> options, ILogger<QuerySlackService> logger) : IQuerySlackService
+public class QuerySlackService(HttpClient httpClient, IOptions<SlackServiceOptions> options) : IQuerySlackService
 {
     private readonly ConcurrentDictionary<string, SlackUser> _users = new();
     private static readonly SlackUser DefaultUser = new("Alice", "Alice");
     
-    public async IAsyncEnumerable<IList<SlackMessage>> GetMessagesAsync(DateTimeOffset start)
+    public async IAsyncEnumerable<SlackMessage> GetMessagesAsync(DateTimeOffset start)
     {
         var orderString = start.ToUnixTimeSeconds().ToString();
         while (true)
@@ -22,13 +23,14 @@ public class QuerySlackService(HttpClient httpClient, IOptions<SlackServiceOptio
 
             if (messages is not null && messages.Any())
             {
-                var slackMessages = messages
-                    .Select(x => new SlackMessage(DefaultUser, x.Text, ToDateTimeOffset(x.Timestamp)))
-                    .Reverse().ToList();
+                foreach (var m in messages)
+                {
+                    var replacedText = await ReplaceMentionToSlackUserNameAsync(m.Text);
 
-                yield return slackMessages;
+                    yield return new SlackMessage(DefaultUser, replacedText, ToDateTimeOffset(m.Timestamp));
+                }
 
-                orderString = slackMessages[0].Timestamp.ToString();
+                orderString = messages[0].Timestamp;
             }
             
             await Task.Delay(options.Value.ApiIntervalSeconds * 1000);
@@ -40,7 +42,6 @@ public class QuerySlackService(HttpClient httpClient, IOptions<SlackServiceOptio
 
     private async Task<IList<ConversationsHistoryMessage>?> GetSlackMessagesFromApiAsync(string orderString)
     {
-        logger.LogInformation($"oldest = {orderString}");
         var response = await httpClient.GetAsync($"conversations.history?channel={options.Value.SlackChannelId}&limit=10&oldest={orderString}");
         var typedResponse = await JsonSerializer.DeserializeAsync<ConversationsHistoryApiResponse>(await response.Content.ReadAsStreamAsync());
 
@@ -48,6 +49,23 @@ public class QuerySlackService(HttpClient httpClient, IOptions<SlackServiceOptio
             return null;
 
         return typedResponse.Messages;
+    }
+
+    private async ValueTask<string> ReplaceMentionToSlackUserNameAsync(string text)
+    {
+        var result = text;
+        foreach (Match match in SlackMentionRegex.MentionPattern().Matches(text))
+        {
+            var userId = match.Groups[1].Value;
+            var user = await GetSlackUserAsync(userId);
+
+            if(!string.IsNullOrWhiteSpace(user?.DisplayName))
+                result = result.Replace(match.Groups[0].Value, '@' + user.DisplayName + ' ');
+            else if (!string.IsNullOrWhiteSpace(user?.Name))
+                result = result.Replace(match.Groups[0].Value, '@' + user.Name + ' ');
+        }
+
+        return result;
     }
     
     private async ValueTask<SlackUser?> GetSlackUserAsync(string slackUserId)
@@ -61,7 +79,7 @@ public class QuerySlackService(HttpClient httpClient, IOptions<SlackServiceOptio
         if (typedResponse?.Ok is not true)
             return null;
 
-        var newUser = new SlackUser(typedResponse.User!.Profile.DisplayName, typedResponse.User!.Profile.DisplayName);
+        var newUser = new SlackUser(typedResponse.User!.Profile.DisplayName, typedResponse.User!.Profile.RealName);
         
         _users.TryAdd(slackUserId, newUser);
         return newUser;
@@ -70,7 +88,7 @@ public class QuerySlackService(HttpClient httpClient, IOptions<SlackServiceOptio
 
 public interface IQuerySlackService
 {
-    IAsyncEnumerable<IList<SlackMessage>> GetMessagesAsync(DateTimeOffset start);
+    IAsyncEnumerable<SlackMessage> GetMessagesAsync(DateTimeOffset start);
 }
 
 //一旦雑にモデルをここに置いておく
@@ -114,7 +132,7 @@ public class ConversationsHistoryMessage
     [JsonPropertyName("type")]
     public string Type { get; set; }
     
-    [JsonPropertyName("subType")]
+    [JsonPropertyName("subtype")]
     public string? SubType { get; set; }
 
     [JsonPropertyName("user")]

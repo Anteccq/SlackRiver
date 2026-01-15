@@ -7,8 +7,14 @@
         xmlns:viewModels="clr-namespace:SlackRiverDotNet.Host.ViewModels"
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=viewModels:WaterWindowViewModel}"
-        Title="WaterWindow" Height="100" Width="200">
-    <Grid>
-        <TextBlock Text="{Binding Content}"></TextBlock>
+        Title="WaterWindow" MinHeight="100" MinWidth="200" Height="Auto"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        IsHitTestVisible="False"
+        ShowInTaskbar="False">
+    <Grid Background="Transparent">
+        <TextBlock Foreground="White" FontSize="40" Text="{Binding Content}"></TextBlock>
     </Grid>
 </Window>
